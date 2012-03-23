@@ -1,0 +1,291 @@
+#!/usr/bin/perl -w
+#
+# Plugin to monitor the actual status of all avaible RAID-Units in the system
+#
+# The resulting Digramm will show the status in numbers between 0 and 2.
+#	2 - best possible status - full redudancy avaible, full performance, all is pretty well.
+#  1=<x<2 - RAID Unit is ok, full redundancy is avaible but some maintainence is going on (verifying/initializing).
+#  0=<x<1 - RAID Unit is degrade, no or reduced redundancy is avaible, check your RAID-Unit
+#
+# Actualy supported:
+#	DM-Raid: OK(2), Others(0)
+#	3Ware-Raid: OK(2), Initializing(1+%) Verifying(1+%), Degraded(0), Rebulding (0+%), Migrating(0+%), Others(0)
+#
+# Origional Author: Christian 'Raptor 2101' Kölpin
+# #
+# Parameters:
+#
+#       config   (required)
+#       autoconf (optional - only used by munin-config)
+#
+# Magic markers (optional - only used by munin-config and some
+# installation scripts):
+#%# family=auto
+#%# capabilities=autoconf
+
+use strict;
+
+my $tw_cli = $ENV{tw_cli} || "/usr/sbin/tw_cli";
+my $dm_raid = $ENV{dm_raid} || "/sbin/dmraid";
+my $md_raid = $ENV{md_raid} || "/proc/mdstat";
+
+sub Extract3WareControlers 
+{ 
+  my($config) = @_;
+  my @stringArray;
+  open (my $query_controlerList,$tw_cli." show|") or die "Could not open tw_cli, $!";
+  while(<$query_controlerList>)
+  {
+    if ($_ =~ m/(^c(\d)*)/)
+    {  
+      my $controler_id = $1;
+      open (my $query_unitcount,$tw_cli." /".$controler_id." show numunits|") or die "Could not open tw_cli, $!";
+  
+      @stringArray = split("=",<$query_unitcount>);
+        
+      $stringArray[1] =~ m/(\d+)/;
+      my $unitCount = $1;
+  
+      for(my $unitNumber = 0; $unitNumber < $unitCount; $unitNumber++)
+      {
+        #UnitName extrahieren
+        open (my $query_unitname,$tw_cli." /".$controler_id. "/u".$unitNumber." show name|") or die "Could not open tw_cli, $!";
+        @stringArray = split("=",<$query_unitname>);
+        my $unitName;
+        if($stringArray[1] =~ m/(\w+)/)
+        {
+          $unitName = $1;
+        }
+        else 
+        {
+         $unitName="Unit".$unitNumber; 
+        }
+        if($config)
+        {
+          my $internLabel="_".$controler_id. "_u".$unitNumber;
+          print $internLabel.".label ".$unitName."\n";
+          print $internLabel.".warning 0.99:\n";
+          print $internLabel.".critical 0.01:\n";
+        }
+        else
+        {
+          #UnitStatus extrahieren
+          open (my $query_statusList,$tw_cli." /".$controler_id. "/u".$unitNumber." show|") or die "Could not open tw_cli, $!";
+          while(<$query_statusList>)
+          {
+       
+            if($_ =~ /^u\d+ /)
+            {
+              my $statusValue = 0;
+              my @statusArray=split(' ',$_);
+              my $unitStatus=$statusArray[2];
+              my $rebuildPercent=$statusArray[3];
+              if($unitStatus eq 'OK')
+              {
+                $statusValue = 2;
+              }
+              elsif ($unitStatus =~ /^VERIFY/) #Possible Status: VERIFYING and VERIFY-PAUSED
+              {
+                my $taskValue = 0;
+                if($statusArray[4] =~ m/(\d+)/){
+                  $taskValue = $1;
+                }  
+                else {
+                 $taskValue = 0; 
+                }
+                $statusValue = 1 + $taskValue/100;
+              }
+              elsif ($unitStatus =~ /^INIT/) #Possible Status: INITIALIZING and INIT-PAUSED
+              {
+                my $taskValue = 0;
+                if($statusArray[4] =~ m/(\d+)/){
+                  $taskValue = $1;
+                }  
+                else {
+                 $taskValue = 0; 
+                }
+                $statusValue = 1 + $taskValue/100;
+              }
+              elsif ($unitStatus =~ /^MIGRAT/) #Possible Status: MIGRATING and MIGRATE-PAUSED
+              {
+                my $taskValue = 0;
+                if($statusArray[4] =~ m/(\d+)/){
+                  $taskValue = $1;
+                }  
+                else {
+                 $taskValue = 0; 
+                }
+                $statusValue = 0 + $taskValue/100;
+              }
+              elsif ($unitStatus =~ /^REBUILD/) #Possible Status: REBUILDING and REBUILD-PAUSED
+              {
+                my $taskValue = 0;
+                if($statusArray[3] =~ m/(\d+)/){
+                  $taskValue = $1;
+                }  
+                else {
+                 $taskValue = 0; 
+                }
+                $statusValue = 0 + $taskValue/100;
+              }
+              print "_".$controler_id. "_u".$unitNumber.'.value '.$statusValue."\n";
+            }
+          }#else labelsonly
+        }
+      }         
+    }
+  }
+}
+
+sub ExtractDmRaidControlers
+{ 
+  my($config) = @_;
+  open (my $query,$dm_raid." -s|") or die "Could not open dmraid, $!";
+  my $current_raid_unit;
+  while(<$query>)
+  {
+    if($config)
+    {
+      if($_ =~ /^name/)
+      {
+        my $replacePattern = "name   : ";
+        $_ =~ s/$replacePattern//;
+        chomp $_;
+        my @stringArray = split("_",$_);
+        print $_.".label ".$stringArray[2]."\n";
+        print $_.".warning 0.99:\n";
+        print $_.".critical 0.01:\n";
+      }
+    }
+    else
+    {
+      if($_ =~ /^name/)
+      {
+        my $replacePattern = "name   : ";
+        $_ =~ s/$replacePattern//;
+        chomp $_;
+        $current_raid_unit = $_;
+      }
+      elsif($_ =~ /^status/)
+      {
+        my $replacePattern = "status : ";
+        $_ =~ s/$replacePattern//;
+        chomp $_;
+        if($_ eq "ok")
+        {
+          print $current_raid_unit.".value 2\n"
+        }
+        else
+        {
+          print $current_raid_unit.".value 0\n"
+        }
+      }
+    }
+  }
+}
+
+sub ExtractMdRaidControlers
+{
+  my($config) = @_;
+  open (my $query,$md_raid) or die "Could not open mdstat, $!";
+  my $current_raid_unit = "";
+  my $status;
+  while(<$query>)
+  {
+    
+    if($config)
+    {
+      if($_ =~ m/^(md(_d){0,1}\d+)/)
+      {
+	print $1.".label ".$1."\n";
+        print $1.".warning 0.99:\n";
+        print $1.".critical 0.01:\n";
+      }
+    }
+    else
+    {
+      if($_ =~ m/^(md(_d){0,1}\d+)/)
+      {
+	if(not $current_raid_unit eq "")
+	{
+	  print $current_raid_unit.".value ".$status."\n"
+	}
+	$current_raid_unit = $1;
+	if($_ =~ /\(F\)/)
+	{
+	  $status = 0;
+	}
+	else
+	{
+	  $status = 2;
+	}
+      }
+
+      if($_ =~ m/recovery = +(\d{1,2}.\d{1})%/)
+      {
+	$status = 0+$1/100;
+      }
+
+      if($_ =~ m/resync = +(\d{1,2}.\d{1})%/)
+      {
+	$status = 1+$1/100;
+      }
+
+      if($_ =~ m/check = +(\d{1,2}.\d{1})%/)
+      {
+        $status = 1+$1/100;
+      } 
+    }
+  }
+
+  if(not $current_raid_unit eq "")
+  {
+    print $current_raid_unit.".value ".$status."\n"
+  }
+}
+if(not defined ($ARGV[0]))
+{
+  $ARGV[0] = ""; 
+  
+}
+if($ARGV[0] eq "config")
+{
+  print "graph_title RAID-Unit Status\n";
+  print "graph_vlabel Status\n";
+  print "graph_args --base 1000 --lower-limit 0 --upper-limit 2\n";
+  print "graph_scale no\n";
+  print "graph_category raid\n";
+  
+  if(-e $tw_cli)
+  {
+    Extract3WareControlers(1);
+  }
+  if(-e $dm_raid)
+  {
+    ExtractDmRaidControlers(1);
+  }
+  if(-e $md_raid)
+  {
+    ExtractMdRaidControlers(1);
+  }
+}
+elsif($ARGV[0] eq "autoconf")
+{
+  print "yes\n";
+}
+else
+{
+  if(-e $tw_cli)
+  {
+    Extract3WareControlers(0);
+  }
+  if(-e $dm_raid)
+  {
+    ExtractDmRaidControlers(0);
+  }
+  if(-e $md_raid)
+  {
+    ExtractMdRaidControlers(0);
+  }
+}
+

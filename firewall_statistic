@@ -1,0 +1,42 @@
+#!/usr/bin/perl -w
+use strict;
+
+my $iptables="/sbin/iptables";
+
+if(not defined ($ARGV[0])) 
+{                             
+  $ARGV[0] = "";                           
+                                           
+}
+
+if($ARGV[0] eq "config") {
+  printf "graph_title Packeges Dropped\n";
+  printf "graph_args --base 1000\n";
+  printf "graph_scale yes\n";
+  printf "graph_category security\n";
+  
+  printf "input.label Input dropped\n";
+  printf "input.type GAUGE\n";
+  
+  printf "output.label Output dropped\n";                                                                                        
+  printf "output.type GAUGE\n";
+  
+  printf "forward.label forward dropped\n";                                                                                        
+  printf "forward.type GAUGE\n";
+}
+else {
+  open (my $output, $iptables." -L -v -n|") or die "Can't query IPTables";
+  while(<$output>) {
+    if($_ =~ /(\d+).+LOG.+LOG.+Input/){
+      print "input.value ".$1."\n";
+    }	
+    if($_ =~ /(\d+).+LOG.+LOG.+Output/){
+      print "output.value ".$1."\n";
+    }
+    if($_ =~ /(\d+).+LOG.+LOG.+Forward/){
+      print "forward.value ".$1."\n";
+    }
+  }
+  system($iptables." -Z");
+}
+

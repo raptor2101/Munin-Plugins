@@ -1,0 +1,348 @@
+#!/usr/bin/perl -w
+#
+# Plugin to monitor the BBU (Battery Backup Unit) capacity in hours. 
+# This value represents the time the BBU can keep the controler-cache valid. 
+#
+# Actualy supports:
+#	3Ware-Raid: If any BBU Attribute (Temperature, Status, ...) is abnormal the capacity is 
+#               reported as 0 otherwise the correct value reported by tw_cli will be displayed.  
+#
+# Origional Author: Christian 'Raptor 2101' Kölpin
+# #
+# Parameters:
+#
+#       config   (required)
+#       autoconf (optional - only used by munin-config)
+#
+# Magic markers (optional - only used by munin-config and some
+# installation scripts):
+#%# family=auto
+#%# capabilities=autoconf
+use strict;
+use Time::Local;
+use Switch;
+
+my $tw_cli = $ENV{tw_cli} || "/usr/sbin/tw_cli";
+my $dm_raid = $ENV{dm_raid} || "/sbin/dmraid";
+
+sub ExtractAvaible3WareControlers
+{ 
+  my($config) = @_;
+  my @stringArray;
+  open (my $query_controlerList,$tw_cli." show|") or die "Could not open tw_cli, $!";
+  while(<$query_controlerList>)
+  {
+    if ($_ =~ m/(^c(\d)*)/)
+    {  
+      print "raid_bbu_".$1."\n";
+    }
+  }
+}
+sub Extract3WareControlers 
+{ 
+  my($config) = @_;
+  my @stringArray;
+  open (my $query_controlerList,$tw_cli." show|") or die "Could not open tw_cli, $!";
+  while(<$query_controlerList>)
+  {
+    if ($_ =~ /(^c(\d)*)/)
+    { 
+      my @valueArray=split(' ',$_);
+      my $controler_id = $valueArray[0];
+      
+      if($config)
+      {
+        print $controler_id.".label ".$valueArray[1]."\n";
+        print $controler_id.".warning 100:\n";
+        print $controler_id.".critical 50:\n";
+      }
+      else
+      {
+        open (my $query_controler_information,$tw_cli." /".$controler_id. " show|") or die "Could not open tw_cli, $!";
+        while(<$query_controler_information>)
+        {
+          if($_ =~ /^bbu/)
+          {
+            my @statusArray=split(' ',$_);
+            
+            #Die unterschiedlichen angaben der BBU müssen stimmen
+            #  OnlineStatus               BBUReady
+            if($statusArray[1] eq "On" && $statusArray[2] eq "Yes" &&
+            #  Status                     Volt                       Temp
+               $statusArray[3] eq "OK" && $statusArray[4] eq "OK" && $statusArray[5] eq "OK"
+            )
+            {
+              print $controler_id.".value ".$statusArray[6]."\n";
+            }
+            else 
+            {
+              print $controler_id.".value 0\n";
+            }
+          }
+        }
+      }         
+    }
+  }
+}
+sub Extract3WareControlerBBU
+{
+  my($config,$controler) = @_;
+  if($config)
+  {
+    open (my $query_unitname,$tw_cli." /".$controler." show model|") or die "Could not open tw_cli, $!";
+    my @stringArray = split("=",<$query_unitname>);
+    my $unitName;
+    if($stringArray[1] =~ m/(\w+(-\w+)?)/)
+    {
+      $unitName = $1;
+    }
+    else 
+    {
+     $unitName=$controler; 
+    }
+
+    print "graph_title ".$unitName." BBU Status\n";
+    print "online_state.label Online Status\n";
+    print "online_state.critical 200:200\n";
+
+    print "bbu_ready.label BBU Ready\n";
+    print "bbu_ready.critical 190:190\n";
+
+    print "bbu_status.label BBU Status\n";
+    print "bbu_status.warning 80:100\n";
+    print "bbu_status.critical 70:100\n";
+
+    print "battery_voltage.label Battery Voltage\n";
+    print "battery_voltage.warning 170:170\n";
+    print "battery_voltage.critical 165:175\n";
+    
+    print "battery_temperature.label Battery Temperature\n";
+    print "battery_temperature.warning 5:45\n";
+    print "battery_temperature.critical 0:50\n";
+
+    print "estimated_backup_capacity.label Backuptime (in hours)\n";
+    print "estimated_backup_capacity.warning 100:255\n";
+    print "estimated_backup_capacity.critical 50:255\n";
+
+    print "days_unchecked.label Last Check (in days)\n";
+    print "days_unchecked.warning 0:180\n";
+  }
+  else
+  {
+    open (my $query_bbuquery, $tw_cli." /".$controler."/bbu show all|") or die "Could not open tw_cli, $!";
+    while(<$query_bbuquery>)
+    {
+      if ($_ =~ /(^\/c(\d)+\/bbu)/)
+      {
+	my @statusArray=split(' ',$_);
+	if($_ =~ /Online State/)
+	{
+	  if($statusArray[4] eq "On")
+	  {
+	    printf "online_state.value 200\n";
+	  }
+	  else
+	  {
+	    print "online_state.value 0\n";
+	  }
+	}
+	if($_ =~ /BBU Ready/)
+	{
+	  if($statusArray[4] eq "Yes")
+	  {
+	    printf "bbu_ready.value 190\n";
+	  }
+	  else
+	  {
+	    print "bbu_ready.value 0\n";
+	  }
+	}
+	
+	if($_ =~ /BBU Status/)
+	{
+	  switch($statusArray[4])
+	  {
+	    case "OK"
+	    {
+	      printf "bbu_status.value 100\n";
+	    }
+	    case "Charging"
+	    {
+	      printf "bbu_status.value 90\n";
+	    }
+	    case "Testing"
+	    {
+	      printf "bbu_status.value 80\n";
+	    }
+	    case "WeakBat"
+	    {
+	      printf "bbu_status.value 70\n";
+	    }
+	    else
+	    {
+	      print "bbu_status.value 0\n";
+	    }
+	  }
+	}
+
+	if($_ =~ /Battery Voltage status/)
+	{
+	  switch($statusArray[5])
+	  {
+	    case "TOO-HIGH"
+	    {
+	      printf "battery_voltage.value 180\n";
+	    }
+	    case "HIGH"
+	    {
+	      printf "battery_voltage.value 175\n";
+	    }
+	    case "OK"
+	    {
+	      printf "battery_voltage.value 170\n";
+	    }
+	    case "LOW"
+	    {
+	      printf "battery_voltage.value 165\n";
+	    }
+	    else
+	    {
+	      print "battery_voltage.value 0\n";
+	    }
+	  }
+	}
+
+	if($_ =~ /Battery Temperature Value/)
+	{
+	  printf "battery_temperature.value ".$statusArray[5]."\n";
+	}
+	
+	if($_ =~ /Estimated Backup Capacity/)
+	{
+	  printf "estimated_backup_capacity.value ".$statusArray[5]."\n";
+	}
+	if($_ =~ /Last Capacity Test/)
+	{
+	  my @datearray = split('-',$statusArray[5]);
+	  switch($datearray[1])
+	  {
+	    case "Jan"
+	    {
+	      $datearray[1] = 0
+	    }
+	    case "Feb"
+	    {
+	      $datearray[1] = 1
+	    }
+	    case "Mar"
+	    {
+	      $datearray[1] = 2
+	    }
+	    case "Apr"
+	    {
+	      $datearray[1] = 3
+	    }
+	    case "May"
+	    {
+	      $datearray[1] = 4
+	    }
+	    case "Jun"
+	    {
+	      $datearray[1] = 5
+	    }
+	    case "Jul"
+	    {
+	      $datearray[1] = 6
+	    }
+	    case "Aug"
+	    {
+	      $datearray[1] = 7
+	    }
+	    case "Sep"
+	    {
+	      $datearray[1] = 8
+	    }
+	    case "Oct"
+	    {
+	      $datearray[1] = 9
+	    }
+	    case "Nov"
+	    {
+	      $datearray[1] = 10
+	    }
+	    case "Dec"
+	    {
+	      $datearray[1] = 11
+	    }
+	  }
+	  my $lastCheck = timelocal(0,0,0,$datearray[0],$datearray[1],$datearray[2]);
+	  my $diff = (time - $lastCheck)/86400;
+	  printf "days_unchecked.value %d\n", $diff;
+	}
+      }
+    }
+  }
+}
+
+my $progname;
+my $controler;
+($progname,$progname, $controler) = split(/_/, $0);
+
+if(not defined ($ARGV[0]))
+{
+  $ARGV[0] = ""; 
+  
+}
+switch($ARGV[0])
+{
+  case "config"
+  {
+    if(not defined ($controler))
+    {
+      print "graph_title BBU Capactiy\n";
+      print "graph_vlabel Capacity in Hours\n";
+      print "graph_scale yes\n";
+      print "graph_category raid\n";
+      print "graph_args --base 1000\n";
+      Extract3WareControlers(1);
+    }
+    else
+    {
+      print "graph_title BBU Capactiy\n";
+      print "graph_scale yes\n";
+      print "graph_category raid\n";
+      print "graph_args --base 1000\n";
+      Extract3WareControlerBBU(1,$controler);
+    }
+  }
+  case "autoconf"
+  {
+    if(-e $tw_cli)
+    {
+      print "yes\n";
+    }
+    else 
+    {
+      print "no\n";
+    }
+  }
+  case "suggest"
+  {
+    print "raid_bbu\n";
+    ExtractAvaible3WareControlers();
+  }
+  else 
+  {
+    if(-e $tw_cli)
+    {
+      if(not defined ($controler))
+      {
+	Extract3WareControlers(0);
+      }
+      else 
+      {
+	Extract3WareControlerBBU(0,$controler);
+      }
+    }
+  }
+}

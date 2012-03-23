@@ -1,0 +1,123 @@
+#!/usr/bin/perl -w
+#
+# Plugin to monitor the BBU (Battery Backup Unit) capacity in hours. 
+# This value represents the time the BBU can keep the controler-cache valid. 
+#
+# Actualy supports:
+#	3Ware-Raid: If any BBU Attribute (Temperature, Status, ...) is abnormal the capacity is 
+#               reported as 0 otherwise the correct value reported by tw_cli will be displayed.  
+#
+# Origional Author: Christian 'Raptor 2101' Kölpin
+# #
+# Parameters:
+#
+#       config   (required)
+#       autoconf (optional - only used by munin-config)
+#
+# Magic markers (optional - only used by munin-config and some
+# installation scripts):
+#%# family=auto
+#%# capabilities=autoconf
+use strict;
+use Time::Local;
+use Switch;
+
+sub DecodeRdiffStatistic
+{
+  my($filePath) = @_;
+  
+  open (my $query_fileContent,$filePath) or die "Could not open Statistic-File, $!";
+  while(<$query_fileContent>)
+  {
+    if($_ =~ /EndTime/)
+    {
+      my @array = split(' ',$_);
+      my $backupTime = $array[1];
+      my $daysSinceBackup = (time - $backupTime)/86400;
+      
+      printf "DaysSinceBackup.value ".$daysSinceBackup."\n";
+    }
+    
+    if($_ =~ /NewFiles/)
+    {
+      my @array = split(' ',$_);
+      printf "NewFiles.value ".$array[1]."\n";
+    }
+    
+    if($_ =~ /DeletedFiles/)
+    {
+      my @array = split(' ',$_);
+      printf "DeletedFiles.value ".$array[1]."\n";
+    }
+    
+    if($_ =~ /ChangedFiles/)
+    {
+      my @array = split(' ',$_);
+      printf "ChangedFiles.value ".$array[1]."\n";
+    }
+
+    if($_ =~ /IncrementFiles/)
+    {
+      my @array = split(' ',$_);
+      printf "IncrementFiles.value ".$array[1]."\n";
+    }
+    if($_ =~ /Errors/)
+    {
+      my @array = split(' ',$_);
+      printf "Errors.value ".$array[1]."\n";
+    }
+  }
+}
+
+sub RdiffStatisticConfig
+{
+  my($filePath) = @_;
+  print "graph_title rdiff-backup ".$filePath." Statistic\n";
+  print "graph_scale yes\n";
+  print "graph_category backup\n";
+  print "graph_args --base 1000\n";
+  print "DaysSinceBackup.label Days since last Backup\n";
+  print "NewFiles.label added Files\n";
+  print "DeletedFiles.label deleted Files\n";
+  print "ChangedFiles.label changed Files\n";
+  print "IncrementFiles.label incremented Files\n";
+  print "Errors.label Errors occured\n";
+  print "Errors.critical :0\n";
+}
+
+my $progname;
+my $path;
+$path = $0;
+
+$path =~ s/.*rdiff_backup_statistic//;
+$path =~ s/_/\//g;
+
+if(not defined ($ARGV[0]))
+{
+  $ARGV[0] = ""; 
+}
+
+if($ARGV[0] eq "config")
+{
+  RdiffStatisticConfig($path)
+}
+elsif ($ARGV[0] eq "autoconf")
+{
+  print "no\n";
+}
+else
+{
+  #printf(STDERR "ls -lt ".$path."/rdiff-backup-data|");
+  open (my $query_fileListing,"ls -lt ".$path."/rdiff-backup-data 2>&1 |") or die "Could not open rdiff backup directorie, $!";
+  
+  while(<$query_fileListing>)
+  {
+    if($_ =~ /session_statistics\..*\.data/)
+    {
+      my @array = split(' ',$_);
+      
+      DecodeRdiffStatistic($path."/rdiff-backup-data/".$array[8]);
+      last;
+    }
+  }
+}

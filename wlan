@@ -1,0 +1,236 @@
+#!/usr/bin/perl -w
+use strict;
+
+my $targetDev;
+
+if($0 =~ m/(wlan\d+)/)
+{
+  $targetDev = $1;
+}
+else
+{
+  exit;
+}
+
+my @station_information;
+my @station_informations = ();
+
+
+my $knownHostsFile = "/etc/munin/wlan_known.hosts";
+my %knownHosts = ();
+if (-e $knownHostsFile)                            
+{
+  open (my $known_hosts, $knownHostsFile) or die "Could not open known_hosts";
+  while(<$known_hosts>)
+  {
+    my @host = split(' ',$_);
+    $knownHosts{$host[0]}=$host[1];
+  }
+}
+
+open (my $hostap_query,'/usr/sbin/iw '.$targetDev.' station dump|') or die "Can't query WLAN interface";
+
+while(<$hostap_query>)
+{
+  if( $_ =~ /(([a-f0-9]{2}:){5}[a-f0-9]{2})/)
+  {
+    if(@station_information)
+    {
+      if($station_information[6] > 300000)
+      {
+        $station_information[2]=0;
+        $station_information[3]=0;
+        $station_information[4]=0;
+        $station_information[5]=0;
+      }
+      push(@station_informations, [@station_information])
+    }
+    
+    if( $knownHosts{ $1 } )
+    {
+      @station_information = ($1, $knownHosts{ $1 } );
+      delete $knownHosts{ $1 };
+    }
+    else
+    {
+      @station_information = ($1, $1);
+    }
+  }
+  
+  if ( $_ =~ /inactive time:\s+(\d+) ms/ )
+  {
+    $station_information[6] = $1;
+  } 
+  
+  if( $_ =~ /signal:\s+-(\d+) (\[-\d+, -\d+\] ){0,1}dBm/)
+  {
+    $station_information[2] = $1;
+  }
+  
+  if( $_ =~ /signal avg:\s+-(\d+) (\[-\d+, -\d+\] ){0,1}dBm/)
+  {
+    $station_information[3] = $1;
+  }
+  
+  if( $_ =~ /tx bitrate:\s+(\d+.\d+) MBit\/s/)
+  {
+    $station_information[4] = $1;
+  }
+  
+  if( $_ =~ /rx bitrate:\s+(\d+.\d+) MBit\/s/)
+  {
+    $station_information[5] = $1;
+  }
+}
+
+if(@station_information)                                                                            
+{                                                                                                   
+  if($station_information[6] > 300000)                                                              
+  {                                                                                                 
+    $station_information[2]=0;                                                                      
+    $station_information[3]=0;                                                                      
+    $station_information[4]=0;                                                                      
+    $station_information[5]=0;                                                                      
+  }                                                                                                 
+  push(@station_informations, [@station_information])                                               
+}
+
+while ( my ($mac, $hostname) = each(%knownHosts) ) {
+  push(@station_informations, [($mac, $hostname,0,0,0,0,0)])
+}
+
+if(not defined ($ARGV[0]))
+{                               
+  $ARGV[0] = "";
+}
+
+if($ARGV[0] eq "config") {
+  printf "multigraph ap_info_$targetDev\n";
+  printf "graph_title ".$targetDev."-Informations\n";
+  printf "graph_category wireless\n";
+  foreach my $station (@station_informations)
+  {
+    my $id = $$station[0];
+    $id =~ s/\://g;
+    printf "mac".$id.".label $$station[1]\n";
+    printf "mac".$id.".type GAUGE\n";
+  }
+  
+  if(@station_informations == 0)
+  {
+    printf "dummy.label dummy\n";
+    printf "dummy.type GAUGE\n";
+  }
+    
+  printf "multigraph ap_info_$targetDev.SignalStrength\n";
+  printf "graph_title ".$targetDev." - signal strength\n";
+  printf "graph_category wireless\n";
+  foreach my $station (@station_informations)
+  {
+    my $id = $$station[0];
+    $id =~ s/\://g;
+    printf "mac".$id.".label $$station[1]\n";
+    printf "mac".$id.".type GAUGE\n";
+  }
+ 
+  if(@station_informations == 0)                                                                        
+  {                                                                 
+    printf "dummy.label dummy\n";                                   
+    printf "dummy.type GAUGE\n";                                    
+  } 
+  
+  printf "multigraph ap_info_$targetDev.SignalStrengthAvg\n";
+  printf "graph_title ".$targetDev." - signal strength (avarage)\n";
+  printf "graph_category wireless\n";
+  foreach my $station (@station_informations)
+  {
+    my $id = $$station[0];
+    $id =~ s/\://g;
+    printf "mac".$id.".label $$station[1]\n";
+    printf "mac".$id.".type GAUGE\n";
+  }
+
+  if(@station_informations == 0)                                                                        
+  {                                                                 
+    printf "dummy.label dummy\n";                                   
+    printf "dummy.type GAUGE\n";                                    
+  }
+
+  printf "multigraph ap_info_$targetDev.bandwidth\n";
+  printf "graph_title ".$targetDev." - Bandwidth\n";
+  printf "graph_category wireless\n";
+  printf "graph_order\n";
+  foreach my $station (@station_informations)
+  {
+    my $id = $$station[0];
+    $id =~ s/\://g;
+    printf "mac".$id."_down.label "."mac".$id."_down\n";
+    printf "mac".$id."_down.type GAUGE\n";
+    printf "mac".$id."_down.graph no\n";
+    printf "mac".$id."_up.label ".$$station[1]."\n";
+    printf "mac".$id."_up.negative "."mac".$id."_down \n";
+    printf "mac".$id."_up.type GAUGE\n";
+  }
+  
+  if(@station_informations == 0)                                                                        
+  {                                                                 
+    printf "dummy.label dummy\n";                                   
+    printf "dummy.type GAUGE\n";                                    
+  }
+}
+else {
+  printf "multigraph ap_info_$targetDev\n";
+  foreach my $station (@station_informations)
+  {
+    my $id = $$station[0];
+    $id =~ s/\://g;
+    printf "mac".$id.".value ".$$station[2]."\n";
+  }
+  
+  if(@station_informations == 0)
+  {
+    printf "dummy.value 0\n";
+  }
+   
+  printf "multigraph ap_info_$targetDev.SignalStrength\n";
+  foreach my $station (@station_informations)
+  {
+    my $id = $$station[0];
+    $id =~ s/\://g;
+    printf "mac".$id.".value ".$$station[3]."\n";
+  }
+  
+  if(@station_informations == 0)
+  {
+    printf "dummy.value 0\n";
+  }
+  
+  printf "multigraph ap_info_$targetDev.SignalStrengthAvg\n";
+  foreach my $station (@station_informations)
+  {
+    my $id = $$station[0];
+    $id =~ s/\://g;
+    printf "mac".$id.".value ".$$station[3]."\n";
+  }
+
+  if(@station_informations == 0)
+  {
+    printf "dummy.value 0\n";
+  }
+
+  printf "multigraph ap_info_$targetDev.bandwidth\n";
+  foreach my $station (@station_informations)
+  {
+    my $id = $$station[0];
+    $id =~ s/\://g;
+    printf "mac".$id."_up.value ".$$station[4]."\n";
+    printf "mac".$id."_down.value ".$$station[5]."\n";
+  }
+  
+  if(@station_informations == 0)
+  {
+    printf "dummy.value 0\n";
+  }
+}
+
+
