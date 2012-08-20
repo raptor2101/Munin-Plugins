@@ -1,18 +1,4 @@
 #!/usr/bin/perl -w
-# Copyright (C) 2010  Raptor 2101 [raptor2101@gmx.de]
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>. 
 #
 # Plugin to monitor the actual status of all avaible RAID-Units in the system
 #
@@ -66,7 +52,7 @@ sub Extract3WareControlers
         open (my $query_unitname,$tw_cli." /".$controler_id. "/u".$unitNumber." show name|") or die "Could not open tw_cli, $!";
         @stringArray = split("=",<$query_unitname>);
         my $unitName;
-        if($stringArray[1] =~ m/(\w+)/)
+        if(@stringArray > 1 and $stringArray[1] =~ m/(\w+)/)
         {
           $unitName = $1;
         }
@@ -239,16 +225,29 @@ sub ExtractMdRaidControlers
       {
 	$status = 0+$1/100;
       }
-
+      
+      if($_ =~ m/recovery=DELAYED/)
+      {
+	$status = 0;
+      }
       if($_ =~ m/resync = +(\d{1,2}.\d{1})%/)
       {
 	$status = 1+$1/100;
+      }
+
+      if($_ =~ m/resync=DELAYED/)
+      {
+	$status = 0;
       }
 
       if($_ =~ m/check = +(\d{1,2}.\d{1})%/)
       {
         $status = 1+$1/100;
       } 
+      if($_ =~ m/check=DELAYED/)
+      {
+	$status = 1;
+      }
     }
   }
 
