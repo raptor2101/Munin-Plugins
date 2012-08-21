@@ -60,10 +60,9 @@ sub Extract3WareControlers
   while(<$query_controlerList>)
   {
     if ($_ =~ /(^c(\d)*)/)
-    { 
+    {
       my @valueArray=split(' ',$_);
       my $controler_id = $valueArray[0];
-      
       if($config)
       {
         print $controler_id.".label ".$valueArray[1]."\n";
@@ -78,7 +77,6 @@ sub Extract3WareControlers
           if($_ =~ /^bbu/)
           {
             my @statusArray=split(' ',$_);
-            
             #Die unterschiedlichen angaben der BBU müssen stimmen
             #  OnlineStatus               BBUReady
             if($statusArray[1] eq "On" && $statusArray[2] eq "Yes" &&
@@ -94,7 +92,7 @@ sub Extract3WareControlers
             }
           }
         }
-      }         
+      }
     }
   }
 }
@@ -129,7 +127,7 @@ sub Extract3WareControlerBBU
     print "battery_voltage.label Battery Voltage\n";
     print "battery_voltage.warning 170:170\n";
     print "battery_voltage.critical 165:175\n";
-    
+
     print "battery_temperature.label Battery Temperature\n";
     print "battery_temperature.warning 5:45\n";
     print "battery_temperature.critical 0:50\n";
@@ -143,7 +141,16 @@ sub Extract3WareControlerBBU
   }
   else
   {
-    open (my $query_bbuquery, $tw_cli." /".$controler."/bbu show all|") or die "Could not open tw_cli, $!";
+    open (my $query_bbuquery, $tw_cli." /".$controler."/bbu shown all|") or die "Could not open tw_cli, $!";
+    if (<$query_bbuquery> == 0 ) {
+      print "online_state.value 0\n";
+      print "bbu_ready.value 0\n";
+      print "bbu_status.value 0\n";
+      print "battery_voltage.value 0\n";
+      print "battery_temperature.value 0\n";
+      print "estimated_backup_capacity.value 0\n";
+      print "days_unchecked.value 1337\n";
+    }
     while(<$query_bbuquery>)
     {
       if ($_ =~ /(^\/c(\d)+\/bbu)/)
@@ -304,8 +311,7 @@ my $controler;
 
 if(not defined ($ARGV[0]))
 {
-  $ARGV[0] = ""; 
-  
+  $ARGV[0] = "";
 }
 switch($ARGV[0])
 {
